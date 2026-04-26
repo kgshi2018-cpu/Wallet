@@ -72,9 +72,17 @@
 			<div class="card" id="logList"></div>
 		</div>
 		
+		<div class="panel" id="view3">
+			<div class="card">
+				<h3>当前时段</h3>
+				<div id="currentTask" style="font-weight:700"></div>
+			</div>
+			<div class="card" id="scheduleTable"></div>
+		</div>
+		
 		
 	<!-- 财务设置 -->
-	
+		<div class="panel" id="view4">
 		<div class="card" id="adminPanel" style="display:none">
 
 			<h3>管理员面板</h3>
@@ -88,7 +96,9 @@
 			<!-- 财务 -->
 			<div class="card">
 				<h3>财务设置</h3>
+				<div>设置当前余额</div>
 				<input id="setMoney" placeholder="当前余额">
+				<div>设置当前欠款</div>
 				<input id="setDebt" placeholder="当前欠款">
 				<button class="primary" onclick="updateBasicFinance()">更新财务</button>
 			</div>
@@ -96,29 +106,39 @@
 			<!-- 利息 -->
 			<div class="card">
 				<h3>利息设置</h3>
+				<div>设置月利率 (0.05=5%)</div>
 				<input id="setRate" placeholder="月利率 (0.05=5%)">
+				<div>设置每日利息下限</div>
 				<input id="setMin" placeholder="每日利息下限">
+				<div>设置每日利息上限</div>
 				<input id="setMax" placeholder="每日利息上限">
 				<button class="primary" onclick="updateInterest()">更新利息</button>
 			</div>
 			
 			<div class="card">
-				<h3>债务影响设置</h3>
-				<input id="setThreshold" placeholder="债务阈值">
-				<input id="setRepayRatio" placeholder="自动还债比例 (0.7)">
-				<input id="setSpendMul" placeholder="消费倍率 (1.2)">
-				<button class="primary" onclick="updateDebtRule()">更新债务规则</button>
+				<h3>借款设置</h3>
+				<div>设置每月借款上限</div>
+				<input id="setBorrowLimit" placeholder="每月借款上限">
+				<button class="primary" onclick="updateBorrowRule()">更新借款上限</button>
+				<div style="margin-top:6px;color:#666;font-size:12px">本月已借: <span id="borrowUsed"></span></div>
+			</div>
+			
+			<div class="card">
+				<h3>四阶段规则设置</h3>
+				<div id="stageConfigList"></div>
+				<button class="primary" onclick="saveStages()">保存阶段设置</button>
 			</div>
 
 			<!-- 退出 -->
 			<button class="danger" onclick="exitAdmin()">退出管理员</button>
 
 		</div>
+		</div>
 
 	</div>
 
 	<div class="nav">
-		<button onclick="tab(0)">收入</button> <button onclick="tab(1)">支出</button> <button onclick="tab(2)">记录</button> <button onclick="adminToggle()">管理员</button>
+		<button onclick="tab(0)">收入</button> <button onclick="tab(1)">支出</button> <button onclick="tab(2)">记录</button> <button onclick="tab(3)">日程</button> <button onclick="adminEnter()">管理员</button>
 	</div>
 
 	<div class="toast" id="toast"></div>
@@ -136,14 +156,74 @@
 		lastDay:"",
 		admin:false,
 		pwd:"123456",
-		penaltyMultiplier:0.5,
-		debtThreshold: 1000,
-		autoRepayRatio: 0.7,
-		spendMultiplier: 1.2,
+		penaltyMultiplier:0.3,
+		borrowLimitMonthly:500,
+		borrowUsedMonth:0,
+		borrowMonth:"",
+		stages:[
+			{ name:"第一阶段", min:0, max:300, color:"#e8f4ff", autoRepayRatio:0, spendMultiplier:1, interestMultiplier:1, borrowFeeMultiplier:0.05, canBuyReward:true, canBorrow:true },
+			{ name:"第二阶段", min:300, max:800, color:"#e8f5e9", autoRepayRatio:0.2, spendMultiplier:1.05, interestMultiplier:1.05, borrowFeeMultiplier:0.1, canBuyReward:true, canBorrow:true },
+			{ name:"第三阶段", min:800, max:1500, color:"#fff3e0", autoRepayRatio:0.4, spendMultiplier:1.2, interestMultiplier:1.15, borrowFeeMultiplier:0.15, canBuyReward:true, canBorrow:true },
+			{ name:"第四阶段", min:1500, max:null, color:"#ffebee", autoRepayRatio:0.5, spendMultiplier:1.3, interestMultiplier:1.2, borrowFeeMultiplier:0.2, canBuyReward:true, canBorrow:false }
+		],
 		habits:[],
 		rewards:[],
 		logs:[]
 	};
+
+	function normalizeLogs(){
+		state.logs = (state.logs || []).map(l => {
+			if(typeof l === "string"){
+				return {
+					time: now(),
+					item: l,
+					deltaMoney: 0,
+					debt: state.debt,
+					balance: state.money
+				};
+			}
+			return {
+				time: l.time || now(),
+				item: l.item || "",
+				deltaMoney: Number(l.deltaMoney || 0),
+				debt: Number(l.debt ?? state.debt),
+				balance: Number(l.balance ?? state.money)
+			};
+		});
+	}
+	
+	function normalizeStages(){
+		if(!Array.isArray(state.stages) || state.stages.length !== 4){
+			state.stages = [
+				{ name:"第一阶段", min:0, max:300, color:"#e8f4ff", autoRepayRatio:0, spendMultiplier:1, interestMultiplier:1, borrowFeeMultiplier:0.05, canBuyReward:true, canBorrow:true },
+				{ name:"第二阶段", min:300, max:800, color:"#e8f5e9", autoRepayRatio:0.2, spendMultiplier:1.05, interestMultiplier:1.05, borrowFeeMultiplier:0.1, canBuyReward:true, canBorrow:true },
+				{ name:"第三阶段", min:800, max:1500, color:"#fff3e0", autoRepayRatio:0.4, spendMultiplier:1.2, interestMultiplier:1.15, borrowFeeMultiplier:0.15, canBuyReward:true, canBorrow:true },
+				{ name:"第四阶段", min:1500, max:null, color:"#ffebee", autoRepayRatio:0.5, spendMultiplier:1.3, interestMultiplier:1.2, borrowFeeMultiplier:0.2, canBuyReward:true, canBorrow:false }
+			];
+		}
+	
+		state.stages = state.stages.map((s, i) => ({
+			name: s.name || `第${i+1}阶段`,
+			min: Number(s.min ?? 0),
+			max: s.max === null || s.max === "" ? null : Number(s.max),
+			color: s.color || "#ffffff",
+			autoRepayRatio: Number(s.autoRepayRatio ?? 0),
+			spendMultiplier: Number(s.spendMultiplier ?? 1),
+			interestMultiplier: Number(s.interestMultiplier ?? 1),
+			borrowFeeMultiplier: Number(s.borrowFeeMultiplier ?? 0),
+			canBuyReward: s.canBuyReward ?? true,
+			canBorrow: s.canBorrow ?? true
+		}));
+	}
+
+	function checkBorrowMonth(){
+		let d = new Date();
+		let key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+		if(state.borrowMonth !== key){
+			state.borrowMonth = key;
+			state.borrowUsedMonth = 0;
+		}
+	}
 
 	const $ = id => document.getElementById(id);
 
@@ -185,11 +265,51 @@
 
 		panels[i].classList.add("active");
 	}
+	
+	function getCurrentStage(){
+		let debt = Number(state.debt || 0);
+		for(let i = 0; i < state.stages.length; i++){
+			let s = state.stages[i];
+			if(debt >= s.min && (s.max === null || debt < s.max)){
+				return s;
+			}
+		}
+		return state.stages[state.stages.length - 1];
+	}
+	
+	const schedule = [
+		{ range:"6:30-7:00", task:"起床，瑜伽", start:390, end:420 },
+		{ range:"7:00-7:30", task:"早饭", start:420, end:450 },
+		{ range:"7:30-11:30", task:"学习", start:450, end:690 },
+		{ range:"11:30-12:30", task:"午饭", start:690, end:750 },
+		{ range:"12:30-13:00", task:"读书", start:750, end:780 },
+		{ range:"13:00-13:30", task:"午觉", start:780, end:810 },
+		{ range:"13:30-17:30", task:"学习", start:810, end:1050 },
+		{ range:"17:30-19:00", task:"晚饭，娱乐", start:1050, end:1140 },
+		{ range:"19:00-20:30", task:"学习", start:1140, end:1230 },
+		{ range:"20:30-21:00", task:"出门散步", start:1230, end:1260 },
+		{ range:"21:00-21:30", task:"运动", start:1260, end:1290 },
+		{ range:"21:30-22:00", task:"洗澡，整理房间", start:1290, end:1320 },
+		{ range:"22:00-23:00", task:"读书，写日记", start:1320, end:1380 },
+		{ range:"23:00-6:30", task:"睡觉", start:1380, end:390 }
+	];
+	
+	function getCurrentTask(){
+		let d = new Date();
+		let mins = d.getHours() * 60 + d.getMinutes();
+	
+		return schedule.find(s => {
+			if(s.start < s.end){
+				return mins >= s.start && mins < s.end;
+			}
+			return mins >= s.start || mins < s.end;
+		});
+	}
 
 
 /* admin */
 
-	function adminToggle(){
+	function adminEnter(){
 		if(!state.admin){
 			let p = prompt("密码");
 			if(p !== state.pwd){
@@ -201,6 +321,7 @@
 			commit();
 			toast("管理员开启");
 		}
+		tab(4);
 	}
 
 	function showAdmin(v){
@@ -239,6 +360,7 @@
 	function done(i){
 		let h=state.habits[i];
 		let t=today();
+		let stage = getCurrentStage();
 
 		if(!h.log[t])h.log[t]=0;
 		if(h.log[t]>=h.m) return toast("已达上限");
@@ -247,15 +369,15 @@
 		
 		let income = h.p;
 
-		// 如果超过债务阈值 → 自动还债
-		if(state.debt > state.debtThreshold){
-			let repay = income * state.autoRepayRatio;
+		// 阶段自动还债
+		if(state.debt > 0 && stage.autoRepayRatio > 0){
+			let repay = Math.min(state.debt, income * stage.autoRepayRatio);
 			let remain = income - repay;
 
 			state.debt -= repay;
 			state.money += remain;
 
-			pushLog("完成 " + h.name + "（部分还债）", remain);
+			pushLog("完成 " + h.name + "（阶段自动还债）", remain);
 		}else{
 			state.money += income;
 			pushLog("完成 " + h.name, income);
@@ -323,6 +445,9 @@
 
 	function buy(i){
 		let r=state.rewards[i];
+		let stage = getCurrentStage();
+
+		if(!stage.canBuyReward) return toast("当前阶段禁止购买");
 
 		let cost = getCost(r);
 		
@@ -369,13 +494,19 @@
 	
 	function borrow(){
 		let amt = +borrowAmount.value;
+		let stage = getCurrentStage();
+		checkBorrowMonth();
 
 		if(amt <= 0) return toast("输入错误");
+		if(!stage.canBorrow) return toast("当前阶段禁止借款");
+		if(state.borrowUsedMonth + amt > state.borrowLimitMonthly) return toast("已超过本月借款上限");
+		let fee = +(amt * stage.borrowFeeMultiplier).toFixed(2);
 
 		state.money += amt;
-		state.debt += amt;
+		state.debt += amt + fee;
+		state.borrowUsedMonth += amt;
 
-		pushLog("借款", amt);
+		pushLog("借款(手续费 " + fee + ")", amt);
 
 		commit();
 		toast("已借款");
@@ -413,20 +544,44 @@
 		setMax.value = "";
 	}
 	
-	function updateDebtRule(){
+	function updateBorrowRule(){
 		if(!state.admin) return;
-
-		if(setThreshold.value !== "") state.debtThreshold = +setThreshold.value;
-		if(setRepayRatio.value !== "") state.autoRepayRatio = +setRepayRatio.value;
-		if(setSpendMul.value !== "") state.spendMultiplier = +setSpendMul.value;
-
-		pushLog("更新债务规则", 0);
+		if(setBorrowLimit.value !== "") state.borrowLimitMonthly = +setBorrowLimit.value;
+		checkBorrowMonth();
+		pushLog("更新借款上限", 0);
 		commit();
-		toast("债务规则已更新");
-		
-		setThreshold.value = "";
-		setRepayRatio.value = "";
-		setSpendMul.value = "";
+		toast("借款上限已更新");
+		setBorrowLimit.value = "";
+	}
+	
+	function saveStages(){
+		if(!state.admin) return;
+	
+		state.stages = state.stages.map((old, i) => {
+			let min = Number($("sMin"+i).value);
+			let maxRaw = $("sMax"+i).value.trim();
+			let max = maxRaw === "" ? null : Number(maxRaw);
+			let autoRepayRatio = Number($("sRepay"+i).value);
+			let spendMultiplier = Number($("sSpend"+i).value);
+			let interestMultiplier = Number($("sInterest"+i).value);
+	
+			return {
+				name: $("sName"+i).value || old.name,
+				min: Number.isFinite(min) ? min : old.min,
+				max: max === null ? null : (Number.isFinite(max) ? max : old.max),
+				color: $("sColor"+i).value || old.color,
+				autoRepayRatio: Number.isFinite(autoRepayRatio) ? autoRepayRatio : old.autoRepayRatio,
+				spendMultiplier: Number.isFinite(spendMultiplier) ? spendMultiplier : old.spendMultiplier,
+				interestMultiplier: Number.isFinite(interestMultiplier) ? interestMultiplier : old.interestMultiplier,
+				borrowFeeMultiplier: Number($("sBorrowFee"+i).value),
+				canBuyReward: $("sBuy"+i).checked,
+				canBorrow: $("sCanBorrow"+i).checked
+			};
+		}).sort((a,b)=>a.min-b.min);
+	
+		pushLog("更新阶段规则", 0);
+		commit();
+		toast("阶段设置已更新");
 	}
 	
 	
@@ -471,10 +626,9 @@
 	
 	function getCost(r){
 		let cost = r.cost;
+		let stage = getCurrentStage();
 
-		if(state.debt > state.debtThreshold){
-			cost *= state.spendMultiplier;
-		}
+		cost *= stage.spendMultiplier;
 
 		return +cost.toFixed(2);
 	}
@@ -510,9 +664,10 @@ function checkNewDay(){
 		   1. 利息
 		====================== */
 		if(state.debt > 0){
+			let stage = getCurrentStage();
 
 			let dailyRate = Math.pow(1 + state.rate, 1/30) - 1;
-			let interest = state.debt * dailyRate;
+			let interest = state.debt * dailyRate * stage.interestMultiplier;
 			interest = +interest.toFixed(2);
 
 			state.debt += interest;
@@ -539,11 +694,11 @@ function checkNewDay(){
 		/* ======================
 		   3. 透支变债务
 		====================== */
-		if(state.money < 0){
-			state.debt += Math.abs(state.money);
-			state.logs.unshift("透支 -> 债务 +" + Math.abs(state.money) + " ["+now()+"]");
-			state.money = 0;
-		}
+			if(state.money < 0){
+				state.debt += Math.abs(state.money);
+				pushLog("透支 -> 债务 +" + Math.abs(state.money), 0);
+				state.money = 0;
+			}
 
 		/* ======================
 		   4. 推进到下一天
@@ -586,7 +741,7 @@ function checkNewDay(){
 		// 👉 触发结算
 		checkNewDay();
 
-		state.logs.unshift("⏭ 手动进入下一天 ["+now()+"]");
+		pushLog("⏭ 手动进入下一天", 0);
 		toast("已进入下一天");
 	}
 
@@ -597,11 +752,13 @@ function checkNewDay(){
 		$("debt").innerText = state.debt.toFixed(2);
 		$("rate").innerText = (state.rate * 100).toFixed(2) + "% /月";
 	
-		if(state.debt > state.debtThreshold){
-			$("status").innerText = " ⚠️ 高债务：消费+" + 
-			((state.spendMultiplier-1)*100).toFixed(0) + "%";
-		}else{
-			$("status").innerText = "";
+		let stage = getCurrentStage();
+		checkBorrowMonth();
+		$("status").innerText = ` ｜ 当前阶段: ${stage.name} ｜ 自动还款: ${(stage.autoRepayRatio*100).toFixed(0)}% ｜ 消费乘数: ${stage.spendMultiplier.toFixed(2)}x`;
+		document.body.style.background = stage.color;
+		let borrowUsedEl = $("borrowUsed");
+		if(borrowUsedEl){
+			borrowUsedEl.innerText = `${state.borrowUsedMonth.toFixed(2)} / ${state.borrowLimitMonthly.toFixed(2)}`;
 		}
 
 		habitList.innerHTML = state.habits
@@ -659,7 +816,7 @@ function checkNewDay(){
 
 			<div>
 				消耗: ${cost}
-				${state.debt > state.debtThreshold ? ` ⚠(${state.spendMultiplier}x)` : ""}
+				${stage.spendMultiplier > 1 ? ` ⚠(${stage.spendMultiplier}x)` : ""}
 				| 库存: ${r.count}
 			</div>
 
@@ -714,11 +871,62 @@ function checkNewDay(){
 		</table>
 		`;
 		
+		let cur = getCurrentTask();
+		currentTask.innerText = cur ? `${cur.range} ${cur.task}` : "暂无安排";
+		
+		scheduleTable.innerHTML = `
+		<table style="width:100%; border-collapse: collapse;">
+		<thead>
+		<tr>
+		<th style="text-align:left">时间</th>
+		<th style="text-align:left">事项</th>
+		</tr>
+		</thead>
+		<tbody>
+		${
+		schedule.map(s => `
+			<tr style="${cur && cur.range === s.range ? "font-weight:700;background:#f2fff3;" : ""}">
+				<td>${s.range}</td>
+				<td>${s.task}</td>
+			</tr>
+		`).join("")
+		}
+		</tbody>
+		</table>
+		`;
+		
+		let stageConfigEl = $("stageConfigList");
+		if(stageConfigEl) stageConfigEl.innerHTML = state.stages.map((s, i) => `
+		<div style="border:1px solid #eee;border-radius:10px;padding:8px;margin-bottom:8px;background:${s.color}">
+			<div><b>阶段${i+1}</b></div>
+			<div>设置阶段名称</div>
+			<input id="sName${i}" value="${s.name}" placeholder="阶段名称">
+			<div>设置债务</div>
+			<input id="sMin${i}" value="${s.min}" type="number" placeholder="最小债务">
+			<input id="sMax${i}" value="${s.max ?? ''}" type="number" placeholder="最大债务(空=无上限)">
+			<div>设置自动还款比例</div>
+			<input id="sRepay${i}" value="${s.autoRepayRatio}" type="number" step="0.01" placeholder="自动还款比例">
+			<div>设置消费乘数</div>
+			<input id="sSpend${i}" value="${s.spendMultiplier}" type="number" step="0.01" placeholder="消费乘数">
+			<div>设置利息乘数</div>
+			<input id="sInterest${i}" value="${s.interestMultiplier}" type="number" step="0.01" placeholder="利息乘数">
+			<div>设置借款手续费乘数</div>
+			<input id="sBorrowFee${i}" value="${s.borrowFeeMultiplier}" type="number" step="0.01" placeholder="借款手续费乘数">
+			<div style="margin-top:6px">
+				<label>颜色 <input id="sColor${i}" value="${s.color}" placeholder="#rrggbb"></label>
+				<label style="margin-left:12px"><input id="sBuy${i}" type="checkbox" ${s.canBuyReward ? "checked" : ""}> 可购买奖励</label>
+				<label style="margin-left:12px"><input id="sCanBorrow${i}" type="checkbox" ${s.canBorrow ? "checked" : ""}> 可借款</label>
+			</div>
+		</div>
+		`).join("");
+		
 		
 	}
 
 	/* INIT */
 
+	normalizeLogs();
+	normalizeStages();
 	showAdmin(state.admin);
 	checkNewDay();
 	render();
