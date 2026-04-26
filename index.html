@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+	<meta charset="UTF-8">
+	<link rel="manifest" href="manifest.json">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>wallet</title>
+
+	<style>
+	body{margin:0;font-family:-apple-system;background:#f5f6f8}
+	.header{position:fixed;top:0;width:100%;background:#4CAF50;color:#fff;padding:14px;text-align:center;font-weight:bold}
+	.bar{display:flex;justify-content:space-between;padding:10px;background:#fff;margin-top:50px}
+	.container{padding:10px 10px 80px}
+	.card{background:#fff;padding:12px;border-radius:14px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,.05)}
+	button{padding:10px;border:none;border-radius:10px;margin-right:5px}
+	.primary{background:#4CAF50;color:#fff}
+	.danger{background:#e74c3c;color:#fff}
+	input{width:100%;padding:10px;margin-top:6px;border:1px solid #ddd;border-radius:10px}
+	.nav{position:fixed;bottom:0;width:100%;display:flex;background:#fff;border-top:1px solid #eee}
+	.nav button{flex:1;padding:12px;background:none}
+	.panel{display:none}
+	.active{display:block}
+	.toast{position:fixed;bottom:60px;left:50%;transform:translateX(-50%);
+	background:#333;color:#fff;padding:10px;border-radius:10px;opacity:0;transition:.3s}
+	.toast.show{opacity:1;bottom:80px}
+	</style>
+</head>
+
+<body>
+
+	<div class="header">Wallet</div>
+
+	<div class="bar">
+		<div>
+			💰 余额: <span id="money"></span> ｜ 💳 欠款: <span id="debt"></span> ｜ 📊 利率: <span id="rate"></span>
+			<span id="status"></span>
+		</div>
+	</div>
+
+
+	<div class="container">
+
+		<!-- HABITS -->
+		<div class="panel active" id="view0">
+			<div class="card" id="adminHabit" style="display:none">
+				<h3>添加收入</h3><input id="hName" placeholder="名称"> <input id="hP" placeholder="奖励" type="number"> <input id="hM" placeholder="每日次数" type="number"> <button class="primary" onclick="addHabit()">添加</button>
+			</div>
+			<div id="habitList"></div>
+		</div><!-- REWARDS -->
+		
+		<div class="panel" id="view1">
+			<div class="card" id="adminReward" style="display:none">
+				<h3>添加支出</h3><input id="rName" placeholder="名称"> <input id="rCost" placeholder="消耗" type="number"> <button class="primary" onclick="addReward()">添加</button>
+			</div>
+			<div id="rewardList"></div>
+			
+					<!-- 还款 -->
+			<div class="card">
+				<h3>还款</h3>
+				<input id="repayAmount" placeholder="输入还款金额">
+				<button class="primary" onclick="repay()">还款</button>
+			</div>
+			
+			<div class="card">
+				<h3>借钱</h3>
+				<input id="borrowAmount" placeholder="输入借款金额">
+				<button class="danger" onclick="borrow()">借钱</button>
+			</div>
+		</div><!-- LOG -->
+		
+		<div class="panel" id="view2">
+			<div class="card" id="logList"></div>
+		</div>
+		
+		
+	<!-- 财务设置 -->
+	
+		<div class="card" id="adminPanel" style="display:none">
+
+			<h3>管理员面板</h3>
+
+			<!-- 时间 -->
+			<div class="card">
+				<h3>时间调试</h3>
+				<button class="primary" onclick="nextDay()">⏭ 下一天</button>
+			</div>
+
+			<!-- 财务 -->
+			<div class="card">
+				<h3>财务设置</h3>
+				<input id="setMoney" placeholder="当前余额">
+				<input id="setDebt" placeholder="当前欠款">
+				<button class="primary" onclick="updateBasicFinance()">更新财务</button>
+			</div>
+
+			<!-- 利息 -->
+			<div class="card">
+				<h3>利息设置</h3>
+				<input id="setRate" placeholder="月利率 (0.05=5%)">
+				<input id="setMin" placeholder="每日利息下限">
+				<input id="setMax" placeholder="每日利息上限">
+				<button class="primary" onclick="updateInterest()">更新利息</button>
+			</div>
+			
+			<div class="card">
+				<h3>债务影响设置</h3>
+				<input id="setThreshold" placeholder="债务阈值">
+				<input id="setRepayRatio" placeholder="自动还债比例 (0.7)">
+				<input id="setSpendMul" placeholder="消费倍率 (1.2)">
+				<button class="primary" onclick="updateDebtRule()">更新债务规则</button>
+			</div>
+
+			<!-- 退出 -->
+			<button class="danger" onclick="exitAdmin()">退出管理员</button>
+
+		</div>
+
+	</div>
+
+	<div class="nav">
+		<button onclick="tab(0)">收入</button> <button onclick="tab(1)">支出</button> <button onclick="tab(2)">记录</button> <button onclick="adminToggle()">管理员</button>
+	</div>
+
+	<div class="toast" id="toast"></div>
+
+	<script>
+
+/* STATE */
+
+	let state = JSON.parse(localStorage.getItem("habit")) || {
+		money:0,
+		debt:100,
+		rate:0.3,
+		interestMin:0.9,
+		interestMax:1.1,
+		lastDay:"",
+		admin:false,
+		pwd:"123456",
+		penaltyMultiplier:0.5,
+		debtThreshold: 1000,
+		autoRepayRatio: 0.7,
+		spendMultiplier: 1.2,
+		habits:[],
+		rewards:[],
+		logs:[]
+	};
+
+	const $ = id => document.getElementById(id);
+
+	/* commit */
+
+	function commit(){
+		state.logs = state.logs.slice(0, 500);
+		localStorage.setItem("habit",JSON.stringify(state));
+		render();
+	}
+
+	/* toast */
+
+	function toast(t){
+	let el=$("toast");
+	el.innerText=t;
+	el.classList.add("show");
+	setTimeout(()=>el.classList.remove("show"),1200);
+	}
+
+	/* utils */
+
+	function today(){
+		let d = new Date();
+		let y = d.getFullYear();
+		let m = String(d.getMonth()+1).padStart(2,'0');
+		let day = String(d.getDate()).padStart(2,'0');
+		return `${y}-${m}-${day}`;
+	}
+
+	function now(){
+	return new Date().toLocaleString();
+	}
+
+	function tab(i){
+		let panels = document.querySelectorAll(".panel");
+
+		panels.forEach(p => p.classList.remove("active"));
+
+		panels[i].classList.add("active");
+	}
+
+
+/* admin */
+
+	function adminToggle(){
+		if(!state.admin){
+			let p = prompt("密码");
+			if(p !== state.pwd){
+				toast("密码错误");
+				return;
+			}
+			state.admin = true;
+			showAdmin(true);
+			commit();
+			toast("管理员开启");
+		}
+	}
+
+	function showAdmin(v){
+		$("adminPanel").style.display = v ? "block" : "none";
+
+		$("adminHabit").style.display = v ? "block" : "none";
+		$("adminReward").style.display = v ? "block" : "none";
+	}
+
+
+	/* ======================
+	  HABIT
+	====================== */
+
+	function addHabit(){
+		if(!state.admin) return;
+
+		const name = document.getElementById("hName").value;
+		const p = +document.getElementById("hP").value;
+		const m = +document.getElementById("hM").value;
+
+		state.habits.push({
+			name,
+			p,
+			m: Math.max(1, m || 1),
+			log:{}
+		});
+
+		document.getElementById("hName").value = "";
+		document.getElementById("hP").value = "";
+		document.getElementById("hM").value = "";
+
+		commit();
+	}
+
+	function done(i){
+		let h=state.habits[i];
+		let t=today();
+
+		if(!h.log[t])h.log[t]=0;
+		if(h.log[t]>=h.m) return toast("已达上限");
+
+		h.log[t]++;
+		
+		let income = h.p;
+
+		// 如果超过债务阈值 → 自动还债
+		if(state.debt > state.debtThreshold){
+			let repay = income * state.autoRepayRatio;
+			let remain = income - repay;
+
+			state.debt -= repay;
+			state.money += remain;
+
+			pushLog("完成 " + h.name + "（部分还债）", remain);
+		}else{
+			state.money += income;
+			pushLog("完成 " + h.name, income);
+		}
+		
+		toast("✅ 完成「" + h.name + "」 +"+h.p);
+
+		commit();
+	}
+
+	function delHabit(i){
+		if(!state.admin) return;
+		state.habits.splice(i,1);
+		commit();
+	}
+
+	function editHabit(i){
+		if(!state.admin) return;
+
+		let h = state.habits[i];
+
+		let name = prompt("习惯名称", h.name);
+		let p = prompt("奖励", h.p);
+		let m = prompt("每日次数", h.m);
+
+		if(name !== null) h.name = name;
+		if(p !== null) h.p = +p;
+		if(m !== null) h.m = +m;
+
+		commit();
+	}
+
+	function undo(i){
+		let h = state.habits[i];
+		let t = today();
+
+		if(!h.log[t] || h.log[t] <= 0){
+		return toast("没有可撤销的记录");
+		}
+
+		h.log[t]--;
+		state.money -= h.p;   // 撤销奖励
+		pushLog("撤销 " + h.name, -h.p);
+
+		commit();
+	}
+	
+	function addReward(){
+		if(!state.admin) return;
+
+		const name = document.getElementById("rName").value;
+		const cost = +document.getElementById("rCost").value;
+
+		state.rewards.push({
+			name,
+			cost,
+			count:0
+		});
+
+		document.getElementById("rName").value = "";
+		document.getElementById("rCost").value = "";
+
+		commit();
+	}
+
+	function buy(i){
+		let r=state.rewards[i];
+
+		let cost = getCost(r);
+		
+		if(state.money < cost) return toast("余额不足");
+
+		state.money -= cost;
+		r.count++;
+
+		pushLog("购买 " + r.name, -cost);
+
+		commit();
+	}
+
+	function use(i){
+		let r=state.rewards[i];
+
+		if(r.count<=0) return toast("无库存");
+
+		r.count--;
+		pushLog("使用 " + r.name, 0);
+
+		commit();
+	}
+
+	function delReward(i){
+		if(!state.admin) return;
+		state.rewards.splice(i,1);
+		commit();
+	}
+
+	function editReward(i){
+		if(!state.admin) return;
+
+		let r = state.rewards[i];
+
+		let name = prompt("奖励名称", r.name);
+		let cost = prompt("消耗", r.cost);
+
+		if(name !== null) r.name = name;
+		if(cost !== null) r.cost = +cost;
+
+		commit();
+	}
+	
+	function borrow(){
+		let amt = +borrowAmount.value;
+
+		if(amt <= 0) return toast("输入错误");
+
+		state.money += amt;
+		state.debt += amt;
+
+		pushLog("借款", amt);
+
+		commit();
+		toast("已借款");
+	}
+	
+	/* 财务设置 */
+	
+	function updateBasicFinance(){
+		if(!state.admin) return;
+
+		if(setMoney.value !== "") state.money = +setMoney.value;
+		if(setDebt.value !== "") state.debt = +setDebt.value;
+
+		pushLog("更新基础财务", 0);
+		commit();
+		toast("基础财务已更新");
+		
+		setMoney.value = "";
+		setDebt.value = "";
+	}
+	
+	function updateInterest(){
+		if(!state.admin) return;
+
+		if(setRate.value !== "") state.rate = +setRate.value;
+		if(setMin.value !== "") state.interestMin = +setMin.value;
+		if(setMax.value !== "") state.interestMax = +setMax.value;
+
+		pushLog("更新利率设置", 0);
+		commit();
+		toast("利率已更新");
+		
+		setRate.value = "";
+		setMin.value = "";
+		setMax.value = "";
+	}
+	
+	function updateDebtRule(){
+		if(!state.admin) return;
+
+		if(setThreshold.value !== "") state.debtThreshold = +setThreshold.value;
+		if(setRepayRatio.value !== "") state.autoRepayRatio = +setRepayRatio.value;
+		if(setSpendMul.value !== "") state.spendMultiplier = +setSpendMul.value;
+
+		pushLog("更新债务规则", 0);
+		commit();
+		toast("债务规则已更新");
+		
+		setThreshold.value = "";
+		setRepayRatio.value = "";
+		setSpendMul.value = "";
+	}
+	
+	
+
+	/* 还款 */
+
+	function repay(){
+	let amt = +repayAmount.value;
+
+	if(amt<=0) return toast("输入错误");
+	if(state.money < amt) return toast("余额不足");
+
+	state.money -= amt;
+	state.debt -= amt;
+	if(state.debt < 0) state.debt = 0;
+
+	pushLog("还款", -amt);
+
+	commit();
+	toast("还款成功");
+	}
+	
+	function exitAdmin(){
+		state.admin = false;
+		showAdmin(false);
+		commit();
+		toast("已退出管理员模式");
+	}
+	
+	function pushLog(item, deltaMoney = 0){
+
+		state.logs.unshift({
+			time: now(),
+			item,
+			deltaMoney,
+			debt: state.debt,
+			balance: state.money
+		});
+
+		if(state.logs.length > 500) state.logs.length = 500;
+	}
+	
+	function getCost(r){
+		let cost = r.cost;
+
+		if(state.debt > state.debtThreshold){
+			cost *= state.spendMultiplier;
+		}
+
+		return +cost.toFixed(2);
+	}
+	
+
+/* 每日结算 */
+
+function checkNewDay(){
+	let t = today();
+
+	if(!state.lastDay){
+		state.lastDay = t;
+		commit();
+		return;
+	}
+
+	// ✅ 用 while 替代 if（关键点）
+	let safe = 0;
+	while(state.lastDay !== t && safe < 1000){
+		safe++;
+
+		// 👉 计算“下一天”
+		let [y,m,day] = state.lastDay.split('-').map(Number);
+		let d = new Date(y, m-1, day);
+		d.setDate(d.getDate() + 1);
+
+		let y2 = d.getFullYear();
+		let m2 = String(d.getMonth()+1).padStart(2,'0');
+		let day2 = String(d.getDate()).padStart(2,'0');
+		let nextDay = `${y2}-${m2}-${day2}`;
+
+		/* ======================
+		   1. 利息
+		====================== */
+		if(state.debt > 0){
+
+			let dailyRate = Math.pow(1 + state.rate, 1/30) - 1;
+			let interest = state.debt * dailyRate;
+			interest = +interest.toFixed(2);
+
+			state.debt += interest;
+
+			pushLog("利息", -interest);
+		}
+
+		/* ======================
+		   2. 未完成惩罚（用旧的一天！）
+		====================== */
+		state.habits.forEach(h=>{
+			let done = h.log[state.lastDay] || 0;
+
+			if(done < h.m){
+				let miss = h.m - done;
+				let penalty = miss * h.p * state.penaltyMultiplier;
+
+				state.money -= penalty;
+
+				pushLog("惩罚 " + h.name, -penalty);
+			}
+		});
+
+		/* ======================
+		   3. 透支变债务
+		====================== */
+		if(state.money < 0){
+			state.debt += Math.abs(state.money);
+			state.logs.unshift("透支 -> 债务 +" + Math.abs(state.money) + " ["+now()+"]");
+			state.money = 0;
+		}
+
+		/* ======================
+		   4. 推进到下一天
+		====================== */
+		state.lastDay = nextDay;
+	}
+
+	commit();
+}
+
+
+
+/* render */
+
+	function nextDay(){
+		if(!state.admin) return;
+
+		// 👉 当前基准日（优先用 lastDay）
+		let base = state.lastDay || today();
+
+		// ❗ 防止非法日期（很关键）
+		if(!base || !base.includes('-')){
+			base = today();
+		}
+
+		// 👉 用“本地时间方式”解析
+		let [y,m,d] = base.split('-').map(Number);
+		let date = new Date(y, m-1, d);
+
+		// 👉 回退一天（制造“跨天”）
+		date.setDate(date.getDate() - 1);
+
+		// 👉 重新格式化（本地时间）
+		let y2 = date.getFullYear();
+		let m2 = String(date.getMonth()+1).padStart(2,'0');
+		let d2 = String(date.getDate()).padStart(2,'0');
+
+		state.lastDay = `${y2}-${m2}-${d2}`;
+
+		// 👉 触发结算
+		checkNewDay();
+
+		state.logs.unshift("⏭ 手动进入下一天 ["+now()+"]");
+		toast("已进入下一天");
+	}
+
+	function render(){
+		let t = today();
+	
+		$("money").innerText = state.money.toFixed(2);
+		$("debt").innerText = state.debt.toFixed(2);
+		$("rate").innerText = (state.rate * 100).toFixed(2) + "% /月";
+	
+		if(state.debt > state.debtThreshold){
+			$("status").innerText = " ⚠️ 高债务：消费+" + 
+			((state.spendMultiplier-1)*100).toFixed(0) + "%";
+		}else{
+			$("status").innerText = "";
+		}
+
+		habitList.innerHTML = state.habits
+		.map((h,i)=>({h,i})) // 保留原索引（关键！）
+		.sort((a,b)=>{
+			let doneA = a.h.log[t]||0;
+			let doneB = b.h.log[t]||0;
+
+			let okA = doneA >= a.h.m;
+			let okB = doneB >= b.h.m;
+
+			return okA - okB; 
+			// false(0) 在前，true(1) 在后
+		})
+		.map(({h,i})=>{
+
+		let done = h.log[t]||0;
+		let ok = done>=h.m;
+		let canUndo = done > 0;
+
+		return `
+		<div class="card" style="background:${ok?'#e8f5e9':'#ffebee'}">
+		<b>${h.name}<\/b>
+		<div>
+		完成 +${h.p} | 已完成 ${done}/${h.m}
+		<\/div>
+
+		<button class="primary" onclick="done(${i})">
+		${ok?'已完成':'完成'}
+		<\/button>
+
+		${canUndo ? `
+		<button class="danger" onclick="undo(${i})">
+		撤销
+		</button>
+		` : ``}
+
+		${state.admin ? `
+		<button onclick="editHabit(${i})">编辑<\/button>
+		<button class="danger" onclick="delHabit(${i})">删除<\/button>
+		` : ''}
+		<\/div>
+		`;
+		}).join("") || "暂无习惯";
+
+		/* rewards */
+		
+		rewardList.innerHTML = state.rewards.map((r,i)=>{
+
+			let cost = getCost(r);
+
+			return `
+			<div class="card">
+			<b>${r.name}<\/b>
+
+			<div>
+				消耗: ${cost}
+				${state.debt > state.debtThreshold ? ` ⚠(${state.spendMultiplier}x)` : ""}
+				| 库存: ${r.count}
+			</div>
+
+			<button class="primary" onclick="buy(${i})">购买<\/button>
+			<button onclick="use(${i})">使用<\/button>
+
+			${state.admin ? `
+			<button onclick="editReward(${i})">编辑<\/button>
+			<button class="danger" onclick="delReward(${i})">删除<\/button>
+			` : ''}
+			</div>
+			`;
+		}).join("") || "暂无奖励";
+
+		logList.innerHTML = `
+		<table style="width:100%; border-collapse: collapse;">
+		<thead>
+		<tr>
+		<th>时间</th>
+		<th>项目</th>
+		<th>余额变动</th>
+		<th>欠款</th>
+		<th>余额</th>
+		</tr>
+		</thead>
+		<tbody>
+		${
+		state.logs.slice(0, 50).map(l => {
+
+			if(typeof l === "string"){
+				return `
+				<tr>
+					<td colspan="5" style="color:#999">
+						${l}
+					</td>
+				</tr>`;
+			}
+
+			return `
+			<tr>
+				<td>${l.time || ""}</td>
+				<td>${l.item || ""}</td>
+				<td>
+					${l.deltaMoney >= 0 ? '+' : ''}${Number(l.deltaMoney).toFixed(2)}
+				</td>
+				<td>${Number(l.debt).toFixed(2)}</td>
+				<td>${Number(l.balance).toFixed(2)}</td>
+			</tr>`;
+		}).join("")
+		}
+		</tbody>
+		</table>
+		`;
+		
+		
+	}
+
+	/* INIT */
+
+	showAdmin(state.admin);
+	checkNewDay();
+	render();
+
+	setInterval(checkNewDay,60000);
+
+</script>
+
+</body>
+</html>
