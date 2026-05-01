@@ -47,6 +47,8 @@
 				<label style="display:block;margin-top:8px"><input id="hStreak" type="checkbox"> 启用连胜/连败机制</label>
 				<label style="display:block;margin-top:8px"><input id="hEnablePenalty" type="checkbox" checked> 启用惩罚</label>
 				<input id="hPenaltyMul" placeholder="惩罚比例(留空=默认)" type="number" step="0.01">
+				<input id="hAllowStart" placeholder="允许完成开始时间(HH:MM)">
+				<input id="hAllowEnd" placeholder="允许完成结束时间(HH:MM)">
 				<button class="primary" onclick="addHabit()">添加</button>
 			</div>
 			<div id="habitList"></div>
@@ -56,6 +58,8 @@
 			<div class="card" id="adminReward" style="display:none">
 				<h3>添加支出</h3><input id="rName" placeholder="名称"> <input id="rCost" placeholder="消耗" type="number">
 				<label style="display:block;margin-top:8px"><input id="rGrad" type="checkbox"> 启用花费梯度</label>
+				<input id="rAllowStart" placeholder="允许购买开始时间(HH:MM)">
+				<input id="rAllowEnd" placeholder="允许购买结束时间(HH:MM)">
 				<button class="primary" onclick="addReward()">添加</button>
 			</div>
 			<div id="rewardList"></div>
@@ -98,14 +102,14 @@
 			<div class="card">
 				<h3>时间调试</h3>
 				<button class="primary" onclick="nextDay()">⏭ 下一天</button>
+				<button class="danger" onclick="startVacation()">🏖 开始假期</button>
+				<button class="primary" onclick="endVacation()">✅ 结束假期</button>
 			</div>
 
 			<!-- 财务 -->
 			<div class="card">
 				<h3>财务设置</h3>
-				<div>设置当前余额</div>
 				<input id="setMoney" placeholder="当前余额">
-				<div>设置当前欠款</div>
 				<input id="setDebt" placeholder="当前欠款">
 				<button class="primary" onclick="updateBasicFinance()">更新财务</button>
 			</div>
@@ -113,18 +117,22 @@
 			<!-- 利息 -->
 			<div class="card">
 				<h3>利息设置</h3>
-				<div>设置月利率 (0.05=5%)</div>
 				<input id="setRate" placeholder="月利率 (0.05=5%)">
-				<div>设置每日利息下限</div>
 				<input id="setMin" placeholder="每日利息下限">
-				<div>设置每日利息上限</div>
 				<input id="setMax" placeholder="每日利息上限">
 				<button class="primary" onclick="updateInterest()">更新利息</button>
 			</div>
 			
 			<div class="card">
+				<h3>债务影响设置</h3>
+				<input id="setThreshold" placeholder="债务阈值">
+				<input id="setRepayRatio" placeholder="自动还债比例 (0.7)">
+				<input id="setSpendMul" placeholder="消费倍率 (1.2)">
+				<button class="primary" onclick="updateDebtRule()">更新债务规则</button>
+			</div>
+			
+			<div class="card">
 				<h3>借款设置</h3>
-				<div>设置每月借款上限</div>
 				<input id="setBorrowLimit" placeholder="每月借款上限">
 				<button class="primary" onclick="updateBorrowRule()">更新借款上限</button>
 				<div style="margin-top:6px;color:#666;font-size:12px">本月已借: <span id="borrowUsed"></span></div>
@@ -161,6 +169,7 @@
 		interestMin:0.9,
 		interestMax:1.1,
 		lastDay:"",
+		vacationMode:false,
 		admin:false,
 		pwd:"123456",
 		penaltyMultiplier:0.5,
@@ -231,7 +240,9 @@
 			loseStreak: Number(h.loseStreak || 0),
 			applyStreak: !!h.applyStreak,
 			enablePenalty: h.enablePenalty ?? true,
-			penaltyMultiplier: h.penaltyMultiplier === undefined || h.penaltyMultiplier === null || h.penaltyMultiplier === "" ? null : Number(h.penaltyMultiplier)
+			penaltyMultiplier: h.penaltyMultiplier === undefined || h.penaltyMultiplier === null || h.penaltyMultiplier === "" ? null : Number(h.penaltyMultiplier),
+			allowStart: h.allowStart || "",
+			allowEnd: h.allowEnd || ""
 		}));
 	}
 
@@ -240,7 +251,9 @@
 			name: r.name || "",
 			cost: Number(r.cost || 0),
 			applyPriceGradient: !!r.applyPriceGradient,
-			lastBuyDate: r.lastBuyDate || ""
+			lastBuyDate: r.lastBuyDate || "",
+			allowStart: r.allowStart || "",
+			allowEnd: r.allowEnd || ""
 		}));
 	}
 
@@ -340,6 +353,24 @@
 		if(gap === 5) return -0.09;
 		return -0.1;
 	}
+
+	function toMins(hhmm){
+		if(!hhmm || !hhmm.includes(":")) return null;
+		let [h,m] = hhmm.split(":").map(Number);
+		if(!Number.isFinite(h) || !Number.isFinite(m)) return null;
+		return h*60 + m;
+	}
+
+	function inRange(startStr, endStr){
+		if(!startStr || !endStr) return true;
+		let start = toMins(startStr);
+		let end = toMins(endStr);
+		if(start === null || end === null) return true;
+		let d = new Date();
+		let nowM = d.getHours()*60 + d.getMinutes();
+		if(start <= end) return nowM >= start && nowM <= end;
+		return nowM >= start || nowM <= end;
+	}
 	
 	const schedule = [
 		{ range:"6:30-7:00", task:"起床，瑜伽", start:390, end:420 },
@@ -409,6 +440,8 @@
 		const applyStreak = document.getElementById("hStreak").checked;
 		const enablePenalty = document.getElementById("hEnablePenalty").checked;
 		const pmRaw = document.getElementById("hPenaltyMul").value.trim();
+		const allowStart = document.getElementById("hAllowStart").value.trim();
+		const allowEnd = document.getElementById("hAllowEnd").value.trim();
 
 		state.habits.push({
 			name,
@@ -419,7 +452,9 @@
 			loseStreak:0,
 			applyStreak,
 			enablePenalty,
-			penaltyMultiplier: pmRaw === "" ? null : Number(pmRaw)
+			penaltyMultiplier: pmRaw === "" ? null : Number(pmRaw),
+			allowStart,
+			allowEnd
 		});
 
 		document.getElementById("hName").value = "";
@@ -428,6 +463,8 @@
 		document.getElementById("hStreak").checked = false;
 		document.getElementById("hEnablePenalty").checked = true;
 		document.getElementById("hPenaltyMul").value = "";
+		document.getElementById("hAllowStart").value = "";
+		document.getElementById("hAllowEnd").value = "";
 
 		commit();
 	}
@@ -439,6 +476,8 @@
 
 		if(!h.log[t])h.log[t]=0;
 		if(h.log[t]>=h.m) return toast("已达上限");
+		if(!inRange(h.allowStart, h.allowEnd)) return toast("当前不在允许完成时间");
+		if(!confirm("确认完成这个习惯吗？")) return;
 
 		h.log[t]++;
 		
@@ -482,6 +521,8 @@
 		let applyStreak = confirm("是否启用连胜/连败机制？\n确定=启用，取消=关闭");
 		let enablePenalty = confirm("是否启用惩罚？\n确定=启用，取消=关闭");
 		let penaltyMultiplier = prompt("惩罚比例(留空=默认)", h.penaltyMultiplier ?? "");
+		let allowStart = prompt("允许完成开始时间(HH:MM，留空=不限制)", h.allowStart || "");
+		let allowEnd = prompt("允许完成结束时间(HH:MM，留空=不限制)", h.allowEnd || "");
 
 		if(name !== null) h.name = name;
 		if(p !== null) h.p = +p;
@@ -492,42 +533,35 @@
 			let t = String(penaltyMultiplier).trim();
 			h.penaltyMultiplier = t === "" ? null : Number(t);
 		}
+		if(allowStart !== null) h.allowStart = String(allowStart).trim();
+		if(allowEnd !== null) h.allowEnd = String(allowEnd).trim();
 
 		commit();
 	}
 
-	function undo(i){
-		let h = state.habits[i];
-		let t = today();
-
-		if(!h.log[t] || h.log[t] <= 0){
-		return toast("没有可撤销的记录");
-		}
-
-		h.log[t]--;
-		state.money -= h.p;   // 撤销奖励
-		pushLog("撤销 " + h.name, -h.p);
-
-		commit();
-	}
-	
 	function addReward(){
 		if(!state.admin) return;
 
 		const name = document.getElementById("rName").value;
 		const cost = +document.getElementById("rCost").value;
 		const applyPriceGradient = document.getElementById("rGrad").checked;
+		const allowStart = document.getElementById("rAllowStart").value.trim();
+		const allowEnd = document.getElementById("rAllowEnd").value.trim();
 
 		state.rewards.push({
 			name,
 			cost,
 			applyPriceGradient,
-			lastBuyDate:""
+			lastBuyDate:"",
+			allowStart,
+			allowEnd
 		});
 
 		document.getElementById("rName").value = "";
 		document.getElementById("rCost").value = "";
 		document.getElementById("rGrad").checked = false;
+		document.getElementById("rAllowStart").value = "";
+		document.getElementById("rAllowEnd").value = "";
 
 		commit();
 	}
@@ -535,6 +569,8 @@
 	function buy(i){
 		let r=state.rewards[i];
 		let stage = getCurrentStage();
+		if(!inRange(r.allowStart, r.allowEnd)) return toast("当前不在允许购买时间");
+		if(!confirm("确认购买并使用这个支出项吗？")) return;
 
 		if(!stage.canBuyReward) return toast("当前阶段禁止购买");
 
@@ -564,10 +600,14 @@
 		let name = prompt("奖励名称", r.name);
 		let cost = prompt("消耗", r.cost);
 		let applyPriceGradient = confirm("是否启用花费梯度？\n确定=启用，取消=关闭");
+		let allowStart = prompt("允许购买开始时间(HH:MM，留空=不限制)", r.allowStart || "");
+		let allowEnd = prompt("允许购买结束时间(HH:MM，留空=不限制)", r.allowEnd || "");
 
 		if(name !== null) r.name = name;
 		if(cost !== null) r.cost = +cost;
 		r.applyPriceGradient = applyPriceGradient;
+		if(allowStart !== null) r.allowStart = String(allowStart).trim();
+		if(allowEnd !== null) r.allowEnd = String(allowEnd).trim();
 
 		commit();
 	}
@@ -576,6 +616,7 @@
 		let amt = +borrowAmount.value;
 		let stage = getCurrentStage();
 		checkBorrowMonth();
+		if(!confirm("确认借钱提现吗？")) return;
 
 		if(amt <= 0) return toast("输入错误");
 		if(!stage.canBorrow) return toast("当前阶段禁止借款");
@@ -590,6 +631,26 @@
 
 		commit();
 		toast("已借款");
+	}
+
+	function startVacation(){
+		if(!state.admin) return;
+		if(state.vacationMode) return toast("已在假期模式");
+		if(!confirm("确认开始假期模式吗？")) return;
+		state.vacationMode = true;
+		pushLog("🏖 开始假期模式", 0);
+		commit();
+		toast("已开始假期模式");
+	}
+
+	function endVacation(){
+		if(!state.admin) return;
+		if(!state.vacationMode) return toast("当前非假期模式");
+		if(!confirm("确认结束假期模式吗？")) return;
+		state.vacationMode = false;
+		pushLog("✅ 结束假期模式", 0);
+		commit();
+		toast("已结束假期模式");
 	}
 	
 	/* 财务设置 */
@@ -622,6 +683,11 @@
 		setRate.value = "";
 		setMin.value = "";
 		setMax.value = "";
+	}
+	
+	function updateDebtRule(){
+		if(!state.admin) return;
+		toast("债务规则已改为阶段设置，请在下方阶段设置中修改");
 	}
 	
 	function updateBorrowRule(){
@@ -668,8 +734,9 @@
 
 	/* 还款 */
 
-	function repay(){
+function repay(){
 	let amt = +repayAmount.value;
+	if(!confirm("确认还款提现吗？")) return;
 
 	if(amt<=0) return toast("输入错误");
 	if(state.money < amt) return toast("余额不足");
@@ -745,7 +812,7 @@ function checkNewDay(){
 		/* ======================
 		   1. 利息
 		====================== */
-		if(state.debt > 0){
+		if(state.debt > 0 && !state.vacationMode){
 			let stage = getCurrentStage();
 
 			let dailyRate = Math.pow(1 + state.rate, 1/30) - 1;
@@ -761,6 +828,7 @@ function checkNewDay(){
 		   2. 未完成惩罚（用旧的一天！）
 		====================== */
 		state.habits.forEach(h=>{
+			if(state.vacationMode) return;
 			let done = h.log[state.lastDay] || 0;
 
 			if(done >= h.m){
@@ -857,12 +925,12 @@ function checkNewDay(){
 	
 		let stage = getCurrentStage();
 		checkBorrowMonth();
-		$("status").innerText = ` ｜ 当前阶段: ${stage.name} ｜ 自动还款: ${(stage.autoRepayRatio*100).toFixed(0)}% ｜ 消费乘数: ${stage.spendMultiplier.toFixed(2)}x`;
+		$("status").innerText = ` ｜ 当前阶段: ${stage.name} ｜ 自动还款: ${(stage.autoRepayRatio*100).toFixed(0)}% ｜ 消费乘数: ${stage.spendMultiplier.toFixed(2)}x${state.vacationMode ? " ｜ 🏖 假期模式" : ""}`;
 		document.body.style.background = stage.color;
 		borrowUsed.innerText = `${state.borrowUsedMonth.toFixed(2)} / ${state.borrowLimitMonthly.toFixed(2)}`;
 		borrowQuota.innerText = `${state.borrowUsedMonth.toFixed(2)} / ${state.borrowLimitMonthly.toFixed(2)}`;
 
-		habitList.innerHTML = state.habits
+		let habitHtml = state.habits
 		.map((h,i)=>({h,i})) // 保留原索引（关键！）
 		.sort((a,b)=>{
 			let doneA = a.h.log[t]||0;
@@ -878,7 +946,6 @@ function checkNewDay(){
 
 		let done = h.log[t]||0;
 		let ok = done>=h.m;
-		let canUndo = done > 0;
 		let displayWin = h.applyStreak ? (Number(h.winStreak || 0) + (ok ? 1 : 0)) : 0;
 		let displayLose = h.applyStreak ? (ok ? 0 : Number(h.loseStreak || 0)) : 0;
 		let bonusRate = getWinBonusRate(displayWin);
@@ -890,6 +957,17 @@ function checkNewDay(){
 		}else if(displayLose > 0){
 			streakText = `连续失败: ${displayLose}天（惩罚+${penaltyPct}%）`;
 		}
+		let penaltyText = "";
+		let allowText = (h.allowStart && h.allowEnd) ? `允许完成时间: ${h.allowStart}-${h.allowEnd}` : "";
+		if(h.enablePenalty){
+			let miss = Math.max(0, h.m - done);
+			if(miss > 0){
+				let penaltyBase = h.penaltyMultiplier === null || h.penaltyMultiplier === undefined ? state.penaltyMultiplier : Number(h.penaltyMultiplier);
+				let penaltyMul = h.applyStreak ? getLosePenaltyMul((Number(h.loseStreak || 0) + 1)) : 1;
+				let penalty = +(miss * h.p * penaltyBase * penaltyMul).toFixed(2);
+				if(penalty > 0) penaltyText = `今日未完成预计惩罚: ${penalty.toFixed(2)}`;
+			}
+		}
 
 		return `
 		<div class="card" style="background:${ok?'#e8f5e9':'#ffebee'}">
@@ -898,24 +976,22 @@ function checkNewDay(){
 		完成 +${h.p} | 已完成 ${done}/${h.m}
 		<\/div>
 		${streakText ? `<div style="font-size:12px;color:#666;margin-top:4px">${streakText}</div>` : ""}
+		${allowText ? `<div style="font-size:12px;color:#2980b9;margin-top:4px">${allowText}</div>` : ""}
 
+		${penaltyText ? `<div style="font-size:12px;color:#c0392b;margin-top:4px">${penaltyText}</div>` : ""}
+		<div style="text-align:right;margin-top:6px">
 		<button class="primary" onclick="done(${i})">
 		${ok?'已完成':'完成'}
 		<\/button>
-
-		${canUndo ? `
-		<button class="danger" onclick="undo(${i})">
-		撤销
-		</button>
-		` : ``}
-
 		${state.admin ? `
 		<button onclick="editHabit(${i})">编辑<\/button>
 		<button class="danger" onclick="delHabit(${i})">删除<\/button>
 		` : ''}
+		</div>
 		<\/div>
 		`;
-		}).join("") || "暂无习惯";
+		}).join("");
+		habitList.innerHTML = habitHtml ? `<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">${habitHtml}</div>` : "暂无习惯";
 
 		/* rewards */
 		
@@ -923,6 +999,7 @@ function checkNewDay(){
 
 				let cost = getCost(r);
 				let gradRate = getRewardGradientRate(r);
+				let allowText = (r.allowStart && r.allowEnd) ? `允许购买时间: ${r.allowStart}-${r.allowEnd}` : "";
 
 				return `
 				<div class="card">
@@ -931,15 +1008,17 @@ function checkNewDay(){
 				<div>
 					消耗: ${cost}
 					${stage.spendMultiplier > 1 ? ` ⚠(${stage.spendMultiplier}x)` : ""}
-					${r.applyPriceGradient ? ` ｜ 成本: ${gradRate>=0?'+':''}${(gradRate*100).toFixed(0)}%` : ""}
+					${r.applyPriceGradient ? ` ｜ 梯度: ${gradRate>=0?'+':''}${(gradRate*100).toFixed(0)}%` : ""}
 				</div>
+				${allowText ? `<div style="font-size:12px;color:#2980b9;margin-top:4px">${allowText}</div>` : ""}
 
+			<div style="text-align:right;margin-top:6px">
 			<button class="primary" onclick="buy(${i})">购买<\/button>
-
 			${state.admin ? `
 			<button onclick="editReward(${i})">编辑<\/button>
 			<button class="danger" onclick="delReward(${i})">删除<\/button>
 			` : ''}
+			</div>
 			</div>
 			`;
 		}).join("") || "暂无奖励";
